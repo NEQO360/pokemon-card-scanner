@@ -1,41 +1,37 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Dimensions } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { View, Animated, StyleSheet } from 'react-native';
+import Svg, { Circle, Path, Defs, LinearGradient, Stop } from 'react-native-svg';
+import theme from '../styles/theme';
 
 interface LoadingAnimationProps {
-  text?: string;
-  subtext?: string;
+  size?: number;
+  color?: string;
 }
 
-const { width: screenWidth } = Dimensions.get('window');
-
 export default function LoadingAnimation({ 
-  text = 'Analyzing card...', 
-  subtext = 'This may take a moment' 
+  size = 60, 
+  color = theme.colors.primary[500] 
 }: LoadingAnimationProps) {
   const rotateAnim = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const dotsAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    // Rotation animation
-    const rotateAnimation = Animated.loop(
+    const rotationAnimation = Animated.loop(
       Animated.timing(rotateAnim, {
         toValue: 1,
-        duration: 3000,
+        duration: 2000,
         useNativeDriver: true,
       })
     );
 
-    // Pulse animation
     const pulseAnimation = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.2,
+        Animated.timing(scaleAnim, {
+          toValue: 1.05,
           duration: 1000,
           useNativeDriver: true,
         }),
-        Animated.timing(pulseAnim, {
+        Animated.timing(scaleAnim, {
           toValue: 1,
           duration: 1000,
           useNativeDriver: true,
@@ -43,152 +39,65 @@ export default function LoadingAnimation({
       ])
     );
 
-    // Dots animation
-    const dotsAnimation = Animated.loop(
-      Animated.timing(dotsAnim, {
-        toValue: 3,
-        duration: 1500,
-        useNativeDriver: false,
-      })
-    );
-
-    rotateAnimation.start();
+    rotationAnimation.start();
     pulseAnimation.start();
-    dotsAnimation.start();
 
     return () => {
-      rotateAnimation.stop();
+      rotationAnimation.stop();
       pulseAnimation.stop();
-      dotsAnimation.stop();
     };
   }, []);
 
-  const rotate = rotateAnim.interpolate({
+  const rotation = rotateAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
-  const renderDots = () => {
-    const dots = [];
-    for (let i = 0; i < 3; i++) {
-      dots.push(
-        <Animated.View
-          key={i}
-          style={[
-            styles.dot,
-            {
-              opacity: dotsAnim.interpolate({
-                inputRange: [i, i + 0.5, i + 1],
-                outputRange: [0.3, 1, 0.3],
-                extrapolate: 'clamp',
-              }),
-            },
-          ]}
-        />
-      );
-    }
-    return dots;
-  };
-
   return (
-    <View style={styles.container}>
-      <View style={styles.animationContainer}>
-        <Animated.View
-          style={[
-            styles.outerRing,
-            {
-              transform: [{ rotate }, { scale: pulseAnim }],
-            },
-          ]}
-        >
-          <LinearGradient
-            colors={['#5e72e4', '#3b4cca', '#5e72e4']}
-            style={styles.gradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
+    <View style={[styles.container, { width: size, height: size }]}>
+      <Animated.View
+        style={{
+          transform: [
+            { rotate: rotation },
+            { scale: scaleAnim },
+          ],
+        }}
+      >
+        <Svg width={size} height={size} viewBox="0 0 50 50">
+          <Defs>
+            <LinearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <Stop offset="0%" stopColor={theme.colors.primary[400]} />
+              <Stop offset="100%" stopColor={theme.colors.primary[600]} />
+            </LinearGradient>
+          </Defs>
+          
+          <Circle
+            cx="25"
+            cy="25"
+            r="20"
+            fill="none"
+            stroke={color}
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray="31.4"
+            strokeDashoffset="15.7"
           />
-        </Animated.View>
-        
-        <View style={styles.innerCircle}>
-          <Text style={styles.pokeball}>⚪</Text>
-        </View>
-      </View>
-
-      <Text style={styles.loadingText}>{text}</Text>
-      <View style={styles.dotsContainer}>
-        <Text style={styles.loadingSubtext}>{subtext}</Text>
-        <View style={styles.dots}>{renderDots()}</View>
-      </View>
+          
+          <Circle
+            cx="25"
+            cy="25"
+            r="3"
+            fill={color}
+          />
+        </Svg>
+      </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-  },
-  animationContainer: {
-    width: 120,
-    height: 120,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  outerRing: {
-    position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    overflow: 'hidden',
-  },
-  gradient: {
-    flex: 1,
-    borderRadius: 60,
-    borderWidth: 4,
-    borderColor: 'transparent',
-  },
-  innerCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  pokeball: {
-    fontSize: 40,
-  },
-  loadingText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  dotsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  loadingSubtext: {
-    fontSize: 16,
-    color: '#666',
-  },
-  dots: {
-    flexDirection: 'row',
-    marginLeft: 4,
-  },
-  dot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#666',
-    marginHorizontal: 2,
   },
 });

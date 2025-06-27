@@ -137,5 +137,32 @@ export interface AppState {
   error: string | null;
 }
 
-
 export type CardCondition = 'NM' | 'LP' | 'MP' | 'HP' | 'DMG';
+
+export interface CardData {
+  id?: string;
+  name: string;
+  set: string;
+  number?: string;
+  rarity: string;
+  type?: string;
+  hp?: number;
+  isAuthentic: boolean;
+  condition?: string;
+  tcgPlayerPrice?: number;
+  ebayPrice?: number;
+  imageUri: string;
+  imageUrl?: string;
+  scannedAt?: string;
+  notes?: string;
+  tags?: string[];
+  releaseDate?: string;
+  artist?: string;
+  series?: string;
+  price?: {
+    market?: number;
+    low?: number;
+    high?: number;
+    average?: number;
+  };
+}
