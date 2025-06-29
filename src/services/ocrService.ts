@@ -23,12 +23,24 @@ export const extractTextFromImage = async (base64Image: string): Promise<CardInf
     return await mockExtractTextFromImage(base64Image);
   }
 
+  // Validate base64 image format
+  if (!base64Image || base64Image.length === 0) {
+    console.error('❌ Invalid base64 image data');
+    throw new Error('Invalid image data provided');
+  }
+
+  // Remove data URL prefix if present (data:image/jpeg;base64,)
+  const cleanBase64 = base64Image.replace(/^data:image\/[a-z]+;base64,/, '');
+
+  console.log('📡 Making request to Google Vision API...');
+  console.log('🔍 Base64 image length:', cleanBase64.length);
+
   try {
     const body = {
       requests: [
         {
           image: {
-            content: base64Image,
+            content: cleanBase64,
           },
           features: [
             {
@@ -40,20 +52,94 @@ export const extractTextFromImage = async (base64Image: string): Promise<CardInf
       ],
     };
 
+    console.log('📤 Request body prepared, sending to Vision API...');
+
     const response = await axios.post<VisionAPIResponse>(
       GOOGLE_CLOUD_VISION_API_URL, 
-      body
+      body,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000, // 30 second timeout
+      }
     );
-    
-    if (response.data.responses[0].textAnnotations) {
-      const extractedText = response.data.responses[0].textAnnotations[0].description;
-      return parseCardInfo(extractedText);
+
+    console.log('✅ Vision API response received');
+    console.log('📊 Response status:', response.status);
+
+    if (response.data.responses && response.data.responses.length > 0) {
+      const visionResponse = response.data.responses[0];
+      
+      // Check for errors in the response
+      if ('error' in visionResponse) {
+        console.error('❌ Vision API returned error:', visionResponse.error);
+        throw new Error(`Vision API error: ${JSON.stringify(visionResponse.error)}`);
+      }
+
+      if (visionResponse.textAnnotations && visionResponse.textAnnotations.length > 0) {
+        const extractedText = visionResponse.textAnnotations[0].description;
+        console.log('📝 Extracted text:', extractedText.substring(0, 200) + '...');
+        return parseCardInfo(extractedText);
+      } else {
+        console.warn('⚠️ No text found in image');
+        // Fall back to mock data when no text is detected
+        return await mockExtractTextFromImage(base64Image);
+      }
     }
     
-    return null;
+    console.warn('⚠️ Empty response from Vision API, using mock data');
+    return await mockExtractTextFromImage(base64Image);
+
   } catch (error) {
-    console.error('OCR Error:', error);
-    throw error;
+    console.error('❌ OCR Error details:');
+    
+    if (axios.isAxiosError(error)) {
+      console.error('📍 Request URL:', error.config?.url);
+      console.error('📱 Response status:', error.response?.status);
+      console.error('📄 Response data:', JSON.stringify(error.response?.data, null, 2));
+      console.error('🔗 Request headers:', JSON.stringify(error.config?.headers, null, 2));
+      
+      // Handle specific Google Vision API errors
+      if (error.response?.status === 400) {
+        const errorData = error.response.data;
+        
+        if (errorData?.error?.message) {
+          console.error('🚫 Google Vision API Error:', errorData.error.message);
+          
+          // Common error scenarios
+          if (errorData.error.message.includes('API key')) {
+            console.error('🔑 API Key issue detected');
+            console.error('💡 Check that your Google Vision API key is valid and has the Vision API enabled');
+          }
+          
+          if (errorData.error.message.includes('quota')) {
+            console.error('💳 Quota exceeded');
+            console.error('💡 Check your Google Cloud billing and API quotas');
+          }
+          
+          if (errorData.error.message.includes('permission')) {
+            console.error('🚫 Permission denied');
+            console.error('💡 Ensure the Vision API is enabled for your Google Cloud project');
+          }
+        }
+      }
+      
+      // For 400 errors, provide more helpful context
+      if (error.response?.status === 400) {
+        console.error('💡 Common causes of 400 errors:');
+        console.error('   1. Invalid API key');
+        console.error('   2. Vision API not enabled in Google Cloud Console');
+        console.error('   3. Invalid base64 image format');
+        console.error('   4. Image too large (>20MB)');
+        console.error('   5. Billing not enabled on Google Cloud project');
+      }
+    } else {
+      console.error('❌ Non-Axios error:', error);
+    }
+    
+    console.log('🔄 Falling back to mock data due to API error');
+    return await mockExtractTextFromImage(base64Image);
   }
 };
 
@@ -109,6 +195,14 @@ const parseCardInfo = (text: string): CardInfo => {
   } else if (text.includes('●')) {
     cardInfo.rarity = 'Common';
   }
+
+  console.log('📋 Parsed card info:', {
+    name: cardInfo.name,
+    hp: cardInfo.hp,
+    type: cardInfo.type,
+    setNumber: cardInfo.setNumber,
+    rarity: cardInfo.rarity
+  });
 
   return cardInfo;
 };

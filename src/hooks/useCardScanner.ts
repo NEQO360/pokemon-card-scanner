@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Alert } from 'react-native';
-import { ScanResult, CardInfo, CardData, ImageData } from '../types';
+import { ScanResult, CardInfo, CardData, ImageData, TCGPlayerPrice, CardKingdomPrice, CardPrices } from '../types';
 import { extractTextFromImage, verifyCardAuthenticity } from '../services/ocrService';
 import { getCardPrices, validateCardWithPokemonAPI } from '../services/pricingService';
 import { ERROR_MESSAGES } from '../utils/constants';
@@ -28,6 +28,112 @@ const SCAN_STEPS = [
   'Checking authenticity...',
   'Fetching market prices...'
 ];
+
+/**
+ * Helper function to extract market price from different price source types
+ */
+const extractMarketPrice = (source: any): number | null => {
+  if (!source || !source.prices) return null;
+  
+  if (source.source === 'TCGPlayer' && 'market' in source.prices) {
+    return source.prices.market;
+  }
+  if (source.source === 'Card Kingdom' && 'nm' in source.prices) {
+    return source.prices.nm; // Use Near Mint price as market price
+  }
+  // For generic price sources, try to find a reasonable market price
+  if (typeof source.prices === 'object') {
+    // Try common price keys
+    return source.prices.market || 
+           source.prices.mid || 
+           source.prices.average || 
+           source.prices.nm ||
+           null;
+  }
+  return null;
+};
+
+/**
+ * Helper function to get the best available price from price sources
+ */
+const getBestAvailablePrice = (priceData: CardPrices | null): number | null => {
+  if (!priceData || !priceData.sources || priceData.sources.length === 0) {
+    return null;
+  }
+
+  // First try to use the pre-calculated average price
+  if (priceData.averagePrice && priceData.averagePrice > 0) {
+    return priceData.averagePrice;
+  }
+
+  // Otherwise extract from individual sources
+  const prices: number[] = [];
+  
+  for (const source of priceData.sources) {
+    const price = extractMarketPrice(source);
+    if (price && price > 0) {
+      prices.push(price);
+    }
+  }
+
+  if (prices.length === 0) return null;
+  
+  // Return average of available prices
+  return prices.reduce((sum, price) => sum + price, 0) / prices.length;
+};
+
+/**
+ * Helper function to get TCGPlayer specific price
+ */
+const getTCGPlayerPrice = (priceData: CardPrices | null): number | null => {
+  if (!priceData || !priceData.sources) return null;
+  
+  const tcgPlayerSource = priceData.sources.find((source) => 
+    source.source === 'TCGPlayer'
+  ) as TCGPlayerPrice | undefined;
+  
+  return tcgPlayerSource?.prices?.market || null;
+};
+
+/**
+ * Helper function to get eBay/alternative price
+ */
+const getEbayPrice = (priceData: CardPrices | null): number | null => {
+  if (!priceData || !priceData.sources) return null;
+  
+  // Look for Card Kingdom or other alternative sources
+  const alternativeSource = priceData.sources.find((source) => 
+    source.source !== 'TCGPlayer'
+  );
+  
+  return extractMarketPrice(alternativeSource);
+};
+
+/**
+ * Helper function to safely parse HP value
+ */
+const parseHP = (hp: string | undefined): number | undefined => {
+  if (!hp) return undefined;
+  const parsed = parseInt(hp, 10);
+  return isNaN(parsed) ? undefined : parsed;
+};
+
+/**
+ * Helper function to safely calculate price ranges
+ */
+const calculatePriceRange = (marketPrice: number | null) => {
+  if (!marketPrice || marketPrice <= 0) {
+    return {
+      low: undefined,
+      high: undefined,
+    };
+  }
+  
+  return {
+    low: Number((marketPrice * 0.8).toFixed(2)),
+    high: Number((marketPrice * 1.2).toFixed(2)),
+  };
+};
 
 export const useCardScanner = ({ onSuccess, onError }: UseCardScannerParams = {}): UseCardScannerReturn => {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
@@ -85,7 +191,7 @@ export const useCardScanner = ({ onSuccess, onError }: UseCardScannerParams = {}
       // Step 4: Get prices if authentic
       setCurrentStep(3);
       setProgress(0.9);
-      let priceData = null;
+      let priceData: CardPrices | null = null;
       if (authenticityResult.isAuthentic) {
         console.log('Fetching price data...');
         try {
@@ -116,19 +222,32 @@ export const useCardScanner = ({ onSuccess, onError }: UseCardScannerParams = {}
       setScanResult(result);
 
       // Convert to CardData format for the new UI
+      const marketPrice = getBestAvailablePrice(priceData);
+      const tcgPlayerPrice = getTCGPlayerPrice(priceData);
+      const ebayPrice = getEbayPrice(priceData);
+      const priceRange = calculatePriceRange(marketPrice);
+
       const cardData: CardData = {
         id: generateCardId(result),
         name: validatedCard?.name || cardInfo.name,
         set: validatedCard?.set.name || 'Unknown Set',
         rarity: validatedCard?.rarity || cardInfo.rarity,
         type: cardInfo.type,
-        hp: cardInfo.hp ? parseInt(cardInfo.hp) : undefined,
+        hp: parseHP(cardInfo.hp),
         isAuthentic: authenticityResult.isAuthentic,
         condition: 'Not assessed',
-        tcgPlayerPrice: priceData?.averagePrice,
-        ebayPrice: priceData?.sources.find(s => s.source === 'TCGPlayer')?.prices?.market,
+        tcgPlayerPrice: tcgPlayerPrice || undefined,
+        ebayPrice: ebayPrice || undefined,
         imageUri: validatedCard?.images?.small || imageData.uri,
         scannedAt: new Date().toISOString(),
+        price: {
+          market: marketPrice || undefined,
+          low: priceRange.low,
+          high: priceRange.high,
+          average: marketPrice || undefined,
+          psa10: priceData?.gradedPrices?.PSA10 || undefined,
+        },
+        gradedPrices: priceData?.gradedPrices || undefined,
       };
 
       onSuccess?.(cardData);

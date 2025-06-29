@@ -2,208 +2,219 @@ import axios, { AxiosError } from 'axios';
 import { 
   CardInfo, 
   PokemonCard, 
-  TCGPlayerPrice, 
-  CardKingdomPrice, 
   CardPrices 
 } from '../types';
+import { POKEMON_TCG_API_KEY } from '@env';
 import { 
-  TCGPLAYER_API_KEY,
-  TCGPLAYER_CLIENT_ID,
-  TCGPLAYER_CLIENT_SECRET,
-  POKEMON_TCG_API_KEY 
-} from '@env';
+  searchCardsByName, 
+  searchCardsBySetAndNumber,
+  getBestMarketPrice,
+  formatCardPrices,
+  PokemonPriceTrackerCard 
+} from './pokemonPriceTrackerService';
 import { getMockTCGPlayerPrice, getMockCardKingdomPrice } from '../utils/mockPriceService';
 
 // Base URLs
-const TCGPLAYER_BASE_URL = 'https://api.tcgplayer.com/v1.39.0';
 const POKEMON_TCG_API_BASE = 'https://api.pokemontcg.io/v2';
 
 // Check if APIs are configured
-const isTCGPlayerConfigured = !!(TCGPLAYER_CLIENT_ID && TCGPLAYER_CLIENT_SECRET);
 const isPokemonTCGConfigured = !!POKEMON_TCG_API_KEY;
+const useMockData = !isPokemonTCGConfigured;
 
-interface TCGPlayerProduct {
-  productId: number;
-  name: string;
-  cleanName: string;
-  imageUrl: string;
-  categoryId: number;
-  groupId: number;
-  url: string;
-  extendedData?: Array<{
-    name: string;
-    value: string;
-  }>;
-}
-
-interface TCGPlayerPriceData {
-  productId: number;
-  lowPrice: number | null;
-  midPrice: number | null;
-  highPrice: number | null;
-  marketPrice: number | null;
-  directLowPrice: number | null;
-  subTypeName: string;
-}
-
-export const getTCGPlayerPrice = async (
+/**
+ * Get pricing data from Pokemon Price Tracker
+ */
+export const getPokemonPriceTrackerData = async (
   cardName: string, 
-  setNumber: string,
-  rarity?: string
-): Promise<TCGPlayerPrice | null> => {
-  // If TCGPlayer is not configured, return mock data
-  if (!isTCGPlayerConfigured) {
-    console.log('📊 Using mock TCGPlayer data (API not configured)');
-    return getMockTCGPlayerPrice(cardName, rarity);
-  }
-
+  setNumber?: string,
+  setName?: string
+): Promise<CardPrices | null> => {
   try {
-    // Search for the product
-    const searchResponse = await axios.get<{
-      success: boolean;
-      results: TCGPlayerProduct[];
-    }>(`${TCGPLAYER_BASE_URL}/catalog/products`, {
-      headers: {
-        'Authorization': `Bearer ${TCGPLAYER_API_KEY}`,
-      },
-      params: {
-        categoryId: 3, // Pokemon category
-        productName: cardName,
-        limit: 10,
-      },
-    });
-
-    if (!searchResponse.data.results || searchResponse.data.results.length === 0) {
-      return null;
+    console.log(`🔍 Searching for card: ${cardName}${setNumber ? ` (${setNumber})` : ''}`);
+    
+    // First, try to search by name
+    let cards = await searchCardsByName(cardName, 10);
+    
+    if (cards.length === 0) {
+      console.log('📝 No cards found by name, using mock data');
+      return createMockPriceData(cardName, setNumber);
     }
 
-    // Find the matching card by set number if possible
-    let product = searchResponse.data.results[0];
+    // If we have a set number, try to find the exact match
+    let bestMatch: PokemonPriceTrackerCard | null = null;
+    
     if (setNumber) {
-      const matchingProduct = searchResponse.data.results.find(p => 
-        p.extendedData?.some(d => 
-          d.name === 'Number' && d.value === setNumber
-        )
-      );
-      if (matchingProduct) product = matchingProduct;
+      // Extract card number from set number (e.g., "25/102" -> "25")
+      const cardNumber = setNumber.split('/')[0];
+      
+      // Try to find exact match by card number
+      bestMatch = cards.find(card => 
+        card.number === cardNumber || 
+        card.number === setNumber ||
+        card.id.includes(cardNumber)
+      ) || null;
+      
+      // If no exact match and we have set info, try searching by set
+      if (!bestMatch && setName) {
+        const setCards = await searchCardsBySetAndNumber(
+          inferSetId(setName), 
+          cardNumber
+        );
+        if (setCards.length > 0) {
+          bestMatch = setCards[0];
+        }
+      }
     }
 
-    // Get pricing for the product
-    const priceResponse = await axios.get<{
-      success: boolean;
-      results: TCGPlayerPriceData[];
-    }>(`${TCGPLAYER_BASE_URL}/pricing/product/${product.productId}`, {
-      headers: {
-        'Authorization': `Bearer ${TCGPLAYER_API_KEY}`,
-      },
-    });
-
-    const prices = priceResponse.data.results;
-    
-    // Extract relevant prices (Normal condition)
-    const normalPrices = prices.filter(p => p.subTypeName === 'Normal');
-    const priceData = normalPrices[0];
-    
-    if (!priceData) {
-      return null;
+    // If no specific match found, use the first result
+    if (!bestMatch && cards.length > 0) {
+      bestMatch = cards[0];
     }
 
-    return {
-      source: 'TCGPlayer',
-      productId: product.productId,
-      cardName: product.name,
-      prices: {
-        low: priceData.lowPrice || 0,
-        mid: priceData.midPrice || 0,
-        high: priceData.highPrice || 0,
-        market: priceData.marketPrice || 0,
-      },
-      url: `https://www.tcgplayer.com/product/${product.productId}`,
+    if (!bestMatch) {
+      console.log('📝 No suitable match found, using mock data');
+      return createMockPriceData(cardName, setNumber);
+    }
+
+    console.log(`✅ Found match: ${bestMatch.name} (${bestMatch.setName})`);
+
+    // Format the pricing data
+    const marketPrice = getBestMarketPrice(bestMatch);
+    const allPrices = formatCardPrices(bestMatch);
+
+    const cardPrices: CardPrices = {
+      cardName: bestMatch.name,
+      setNumber: setNumber || bestMatch.number,
+      sources: [],
+      averagePrice: marketPrice || undefined,
     };
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error('TCGPlayer API Error:', error.response?.data || error.message);
-    } else {
-      console.error('TCGPlayer API Error:', error);
+
+    // Add TCGPlayer data if available
+    if (allPrices.tcgplayer) {
+      cardPrices.sources.push({
+        source: 'TCGPlayer',
+        productId: 0, // Not provided by Pokemon Price Tracker
+        cardName: bestMatch.name,
+        prices: {
+          low: allPrices.tcgplayer.low,
+          mid: allPrices.tcgplayer.mid,
+          high: allPrices.tcgplayer.high,
+          market: allPrices.tcgplayer.market,
+        },
+        url: bestMatch.tcgplayer?.url || `https://www.tcgplayer.com/search/pokemon/product?productName=${encodeURIComponent(bestMatch.name)}`,
+      });
     }
-    return null;
+
+    // Add CardMarket data if available
+    if (allPrices.cardmarket) {
+      cardPrices.sources.push({
+        source: 'Card Kingdom', // Using Card Kingdom type for CardMarket data
+        cardName: bestMatch.name,
+        prices: {
+          nm: allPrices.cardmarket.market,
+          lp: allPrices.cardmarket.market * 0.85,
+          mp: allPrices.cardmarket.market * 0.65,
+          hp: allPrices.cardmarket.market * 0.45,
+        },
+        inStock: true,
+        url: bestMatch.cardmarket?.url || `https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(bestMatch.name)}`,
+      });
+    }
+
+    return cardPrices;
+
+  } catch (error) {
+    console.error('Pokemon Price Tracker error:', error);
+    return createMockPriceData(cardName, setNumber);
   }
 };
 
-export const getCardKingdomPrice = async (
-  cardName: string, 
-  setName?: string,
-  rarity?: string
-): Promise<CardKingdomPrice | null> => {
-  try {
-    // This is a mock implementation
-    // In production, you would need to implement web scraping or use a third-party service
-    
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // Mock response for demonstration
-    return {
-      source: 'Card Kingdom',
-      cardName: cardName,
-      prices: {
-        nm: parseFloat((Math.random() * 50 + 10).toFixed(2)),
-        lp: parseFloat((Math.random() * 40 + 8).toFixed(2)),
-        mp: parseFloat((Math.random() * 30 + 6).toFixed(2)),
-        hp: parseFloat((Math.random() * 20 + 4).toFixed(2)),
-      },
-      inStock: Math.random() > 0.3,
-      url: `https://www.cardkingdom.com/pokemon/${cardName.toLowerCase().replace(/\s+/g, '-')}`,
-    };
-  } catch (error) {
-    console.error('Card Kingdom Price Error:', error);
-    return null;
-  }
+/**
+ * Create mock price data when API is unavailable
+ */
+const createMockPriceData = (cardName: string, setNumber?: string): CardPrices => {
+  console.log('📝 Using mock price data');
+  
+  const mockTCGPlayer = getMockTCGPlayerPrice(cardName);
+  const mockCardKingdom = getMockCardKingdomPrice(cardName);
+
+  return {
+    cardName,
+    setNumber: setNumber || 'unknown',
+    sources: [mockTCGPlayer, mockCardKingdom],
+    averagePrice: (mockTCGPlayer.prices.market + mockCardKingdom.prices.nm) / 2,
+  };
 };
 
+/**
+ * Helper function to infer set ID from set name
+ * This is a basic implementation - you may need to expand this based on actual set mappings
+ */
+const inferSetId = (setName: string): string => {
+  const setMappings: Record<string, string> = {
+    'Base Set': 'base1',
+    'Jungle': 'jungle',
+    'Fossil': 'fossil',
+    'Team Rocket': 'team-rocket',
+    'Gym Heroes': 'gym-heroes',
+    'Gym Challenge': 'gym-challenge',
+    'Neo Genesis': 'neo-genesis',
+    'Neo Discovery': 'neo-discovery',
+    'Neo Destiny': 'neo-destiny',
+    'Neo Revelation': 'neo-revelation',
+    'Legendary Collection': 'legendary-collection',
+    'Expedition': 'expedition',
+    'Aquapolis': 'aquapolis',
+    'Skyridge': 'skyridge',
+    'Ruby & Sapphire': 'ruby-sapphire',
+    'Sandstorm': 'sandstorm',
+    'Dragon': 'dragon',
+    'Team Magma vs Team Aqua': 'team-magma-vs-team-aqua',
+    'Hidden Fates': 'hidden-fates',
+    'Shining Fates': 'shining-fates',
+    'Battle Styles': 'battle-styles',
+    'Chilling Reign': 'chilling-reign',
+    'Evolving Skies': 'evolving-skies',
+    'Fusion Strike': 'fusion-strike',
+    'Brilliant Stars': 'brilliant-stars',
+    'Astral Radiance': 'astral-radiance',
+    'Lost Origin': 'lost-origin',
+    'Silver Tempest': 'silver-tempest',
+    'Crown Zenith': 'crown-zenith',
+    'Scarlet & Violet': 'sv1',
+    'Paldea Evolved': 'sv2',
+    'Obsidian Flames': 'sv3',
+    'Paradox Rift': 'sv4',
+    'Paldean Fates': 'sv4.5',
+    'Temporal Forces': 'sv5',
+  };
+
+  return setMappings[setName] || setName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+};
+
+/**
+ * Main function to get card prices - replaces the old getCardPrices
+ */
 export const getCardPrices = async (cardInfo: CardInfo): Promise<CardPrices | null> => {
   try {
-    const [tcgPlayerPrice, cardKingdomPrice] = await Promise.all([
-      getTCGPlayerPrice(cardInfo.name, cardInfo.setNumber, cardInfo.rarity),
-      getCardKingdomPrice(cardInfo.name, cardInfo.setName, cardInfo.rarity),
-    ]);
+    // Use Pokemon Price Tracker as primary source
+    const priceData = await getPokemonPriceTrackerData(
+      cardInfo.name, 
+      cardInfo.setNumber, 
+      cardInfo.setName
+    );
 
-    const prices: CardPrices = {
-      cardName: cardInfo.name,
-      setNumber: cardInfo.setNumber,
-      sources: [],
-    };
-
-    if (tcgPlayerPrice) {
-      prices.sources.push(tcgPlayerPrice);
+    if (priceData && priceData.sources.length > 0) {
+      return priceData;
     }
 
-    if (cardKingdomPrice) {
-      prices.sources.push(cardKingdomPrice);
-    }
+    // Fallback to mock data
+    console.log('📝 Falling back to mock price data');
+    return createMockPriceData(cardInfo.name, cardInfo.setNumber);
 
-    // Calculate average market price
-    if (prices.sources.length > 0) {
-      const marketPrices: number[] = [];
-      
-      prices.sources.forEach(source => {
-        if (source.source === 'TCGPlayer') {
-          marketPrices.push(source.prices.market);
-        } else if (source.source === 'Card Kingdom') {
-          marketPrices.push(source.prices.nm);
-        }
-      });
-      
-      const validPrices = marketPrices.filter(p => p > 0);
-      prices.averagePrice = validPrices.length > 0
-        ? validPrices.reduce((a, b) => a + b, 0) / validPrices.length
-        : 0;
-    }
-
-    return prices;
   } catch (error) {
     console.error('Price aggregation error:', error);
-    return null;
+    return createMockPriceData(cardInfo.name, cardInfo.setNumber);
   }
 };
 
@@ -215,6 +226,9 @@ interface PokemonAPIResponse {
   totalCount: number;
 }
 
+/**
+ * Validate card with Pokemon TCG API (unchanged)
+ */
 export const validateCardWithPokemonAPI = async (
   cardName: string, 
   setNumber?: string

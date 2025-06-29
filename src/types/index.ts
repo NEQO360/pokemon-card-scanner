@@ -69,23 +69,26 @@ export interface PokemonCard {
   };
 }
 
-// Pricing Types
-export interface TCGPlayerPrice {
+// Updated Pricing Types - Removed TCGPlayer specific types, using generic types
+export interface PriceSource {
+  source: string;
+  cardName: string;
+  url: string;
+}
+
+export interface TCGPlayerPrice extends PriceSource {
   source: 'TCGPlayer';
   productId: number;
-  cardName: string;
   prices: {
     low: number;
     mid: number;
     high: number;
     market: number;
   };
-  url: string;
 }
 
-export interface CardKingdomPrice {
+export interface CardKingdomPrice extends PriceSource {
   source: 'Card Kingdom';
-  cardName: string;
   prices: {
     nm: number;  // Near Mint
     lp: number;  // Lightly Played
@@ -93,16 +96,25 @@ export interface CardKingdomPrice {
     hp: number;  // Heavily Played
   };
   inStock: boolean;
-  url: string;
 }
 
-export type PriceSource = TCGPlayerPrice | CardKingdomPrice;
+// Generic price source that can represent any marketplace
+export interface GenericPriceSource extends PriceSource {
+  source: string;
+  prices: Record<string, number>;
+  metadata?: Record<string, any>;
+}
+
+export type PriceSourceType = TCGPlayerPrice | CardKingdomPrice | GenericPriceSource;
 
 export interface CardPrices {
   cardName: string;
   setNumber: string;
-  sources: PriceSource[];
+  sources: PriceSourceType[];
   averagePrice?: number;
+  gradedPrices?: {
+    [grade: string]: number; // e.g., "PSA10": 150.00, "BGS9.5": 120.00
+  };
 }
 
 // Scan Result Type
@@ -164,5 +176,9 @@ export interface CardData {
     low?: number;
     high?: number;
     average?: number;
+    psa10?: number; // Added PSA 10 price support
+  };
+  gradedPrices?: {
+    [grade: string]: number; // Support for all graded card prices
   };
 }

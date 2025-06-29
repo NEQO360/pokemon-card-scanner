@@ -1,15 +1,15 @@
 // API Keys - Move these to environment variables in production
 export const API_KEYS = {
   GOOGLE_VISION: process.env.GOOGLE_VISION_API_KEY || 'YOUR_GOOGLE_VISION_API_KEY',
-  TCGPLAYER: process.env.TCGPLAYER_API_KEY || 'YOUR_TCGPLAYER_API_KEY',
   POKEMON_TCG: process.env.POKEMON_TCG_API_KEY || 'YOUR_POKEMON_TCG_API_KEY',
+  POKEMON_PRICE_TRACKER: process.env.POKEMON_PRICE_TRACKER_API_KEY || 'YOUR_POKEMON_PRICE_TRACKER_API_KEY',
 };
 
 // API Endpoints
 export const API_ENDPOINTS = {
   GOOGLE_VISION: 'https://vision.googleapis.com/v1/images:annotate',
-  TCGPLAYER_BASE: 'https://api.tcgplayer.com/v1.39.0',
   POKEMON_TCG_BASE: 'https://api.pokemontcg.io/v2',
+  POKEMON_PRICE_TRACKER_BASE: 'https://www.pokemonpricetracker.com/api/v1',
   CARD_KINGDOM_BASE: 'https://www.cardkingdom.com',
 };
 
@@ -55,6 +55,24 @@ export const CARD_CONDITIONS = {
 } as const;
 
 export type CardCondition = keyof typeof CARD_CONDITIONS;
+
+// Card Grading Services
+export const GRADING_SERVICES = {
+  PSA: 'Professional Sports Authenticator',
+  BGS: 'Beckett Grading Services',
+  CGC: 'Certified Guaranty Company',
+  SGC: 'Sportscard Guaranty',
+} as const;
+
+export type GradingService = keyof typeof GRADING_SERVICES;
+
+// Common PSA/BGS grades
+export const COMMON_GRADES = [
+  'PSA10', 'PSA9', 'PSA8', 'PSA7',
+  'BGS10', 'BGS9.5', 'BGS9', 'BGS8.5', 'BGS8',
+  'CGC10', 'CGC9.5', 'CGC9', 'CGC8.5',
+  'SGC10', 'SGC9.5', 'SGC9', 'SGC8.5'
+] as const;
 
 // Authenticity Thresholds
 export const AUTHENTICITY_THRESHOLDS = {
